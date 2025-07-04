@@ -1,12 +1,42 @@
 import db from '../models/index.js';
 
+/* -------------------------------------------------------------------------- */
+/*  Utility: build Sequelize query options for pagination, sorting, populate   */
+/* -------------------------------------------------------------------------- */
+function buildQueryOptions(query = {}) {
+  // Pagination
+  const limit = Math.max(parseInt(query.limit) || 10, 1);
+  const page = Math.max(parseInt(query.page) || 1, 1);
+  const offset = (page - 1) * limit;
+
+  // Sorting
+  const sortDir = (query.sort || 'asc').toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+  const order = [['createdAt', sortDir]];
+
+  // Eager loading
+  const include = [];
+  if (query.populate) {
+    const relations = query.populate.split(',').map(r => r.trim().toLowerCase());
+    if (relations.includes('student') || relations.includes('all')) include.push(db.Student);
+    if (relations.includes('teacher') || relations.includes('all')) include.push(db.Teacher);
+  }
+
+  return { limit, offset, order, include };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  @swagger tags                                                             */
+/* -------------------------------------------------------------------------- */
 /**
  * @swagger
  * tags:
- *   - name: Courses
- *     description: Course management
+ *   name: Courses
+ *   description: Course management
  */
 
+/* -------------------------------------------------------------------------- */
+/*  Create                                                                    */
+/* -------------------------------------------------------------------------- */
 /**
  * @swagger
  * /courses:
@@ -21,25 +51,25 @@ import db from '../models/index.js';
  *             type: object
  *             required: [title, description, TeacherId]
  *             properties:
- *               title:
- *                 type: string
- *               description:
- *                 type: string
- *               TeacherId:
- *                 type: integer
+ *               title: { type: string }
+ *               description: { type: string }
+ *               TeacherId: { type: integer }
  *     responses:
  *       201:
  *         description: Course created
  */
 export const createCourse = async (req, res) => {
-    try {
-        const course = await db.Course.create(req.body);
-        res.status(201).json(course);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const course = await db.Course.create(req.body);
+    res.status(201).json(course);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
+/* -------------------------------------------------------------------------- */
+/*  Get all                                                                   */
+/* -------------------------------------------------------------------------- */
 /**
  * @swagger
  * /courses:
@@ -48,46 +78,45 @@ export const createCourse = async (req, res) => {
  *     tags: [Courses]
  *     parameters:
  *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 10 }
+ *         description: Number of records per page
+ *       - in: query
  *         name: page
  *         schema: { type: integer, default: 1 }
  *         description: Page number
  *       - in: query
- *         name: limit
- *         schema: { type: integer, default: 10 }
- *         description: Number of items per page
+ *         name: sort
+ *         schema: { type: string, enum: [asc, desc], default: asc }
+ *         description: Sort direction by created time
+ *       - in: query
+ *         name: populate
+ *         schema: { type: string, example: "student,teacher" }
+ *         description: Relations to include (student, teacher, or all)
  *     responses:
  *       200:
- *         description: List of courses
+ *         description: Paginated list of courses
  */
 export const getAllCourses = async (req, res) => {
+  try {
+    const opts = buildQueryOptions(req.query);
+    const { count, rows } = await db.Course.findAndCountAll(opts);
 
-    // take certain amount at a time
-    const limit = parseInt(req.query.limit) || 10;
-    // which page to take
-    const page = parseInt(req.query.page) || 1;
-
-    const total = await db.Course.count();
-
-    try {
-        const courses = await db.Course.findAll(
-            {
-                // include: [db.Student, db.Teacher],
-                limit: limit, offset: (page - 1) * limit
-            }
-        );
-        res.json({
-            meta: {
-                totalItems: total,
-                page: page,
-                totalPages: Math.ceil(total / limit),
-            },
-            data: courses,
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    res.json({
+      total: count,
+      page: Number(req.query.page) || 1,
+      limit: Number(req.query.limit) || 10,
+      totalPages: Math.ceil(count / (Number(req.query.limit) || 10)),
+      data: rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
+/* -------------------------------------------------------------------------- */
+/*  Get by ID                                                                 */
+/* -------------------------------------------------------------------------- */
 /**
  * @swagger
  * /courses/{id}:
@@ -99,6 +128,10 @@ export const getAllCourses = async (req, res) => {
  *         name: id
  *         required: true
  *         schema: { type: integer }
+ *       - in: query
+ *         name: populate
+ *         schema: { type: string, example: "student,teacher" }
+ *         description: Relations to include (student, teacher, or all)
  *     responses:
  *       200:
  *         description: Course found
@@ -106,15 +139,19 @@ export const getAllCourses = async (req, res) => {
  *         description: Not found
  */
 export const getCourseById = async (req, res) => {
-    try {
-        const course = await db.Course.findByPk(req.params.id, { include: [db.Student, db.Teacher] });
-        if (!course) return res.status(404).json({ message: 'Not found' });
-        res.json(course);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const opts = buildQueryOptions(req.query);
+    const course = await db.Course.findByPk(req.params.id, opts);
+    if (!course) return res.status(404).json({ message: 'Not found' });
+    res.json(course);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
+/* -------------------------------------------------------------------------- */
+/*  Update                                                                    */
+/* -------------------------------------------------------------------------- */
 /**
  * @swagger
  * /courses/{id}:
@@ -130,22 +167,31 @@ export const getCourseById = async (req, res) => {
  *       required: true
  *       content:
  *         application/json:
- *           schema: { type: object }
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title: { type: string }
+ *               description: { type: string }
+ *               TeacherId: { type: integer }
  *     responses:
  *       200:
  *         description: Course updated
  */
 export const updateCourse = async (req, res) => {
-    try {
-        const course = await db.Course.findByPk(req.params.id);
-        if (!course) return res.status(404).json({ message: 'Not found' });
-        await course.update(req.body);
-        res.json(course);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const course = await db.Course.findByPk(req.params.id);
+    if (!course) return res.status(404).json({ message: 'Not found' });
+
+    await course.update(req.body);
+    res.json(course);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
+/* -------------------------------------------------------------------------- */
+/*  Delete                                                                    */
+/* -------------------------------------------------------------------------- */
 /**
  * @swagger
  * /courses/{id}:
@@ -162,12 +208,13 @@ export const updateCourse = async (req, res) => {
  *         description: Course deleted
  */
 export const deleteCourse = async (req, res) => {
-    try {
-        const course = await db.Course.findByPk(req.params.id);
-        if (!course) return res.status(404).json({ message: 'Not found' });
-        await course.destroy();
-        res.json({ message: 'Deleted' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const course = await db.Course.findByPk(req.params.id);
+    if (!course) return res.status(404).json({ message: 'Not found' });
+
+    await course.destroy();
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
