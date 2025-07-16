@@ -4,6 +4,8 @@ import StudentModel from './student.model.js';
 import CourseModel from './course.model.js';
 import TeacherModel from './teacher.model.js';
 
+
+
 const sequelize = new Sequelize(dbConfig.DB, dbConfig.USER, dbConfig.PASSWORD, {
     host: dbConfig.HOST,
     port: dbConfig.PORT,
