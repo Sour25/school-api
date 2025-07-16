@@ -1,8 +1,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import db from '../models/index.js'; // adjust the path if needed
 
-const users = []; // In-memory user store (temporary)
-let idCounter = 1;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS) || 10;
 
@@ -31,7 +30,7 @@ const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS) || 10;
  *                 example: secret123
  *     responses:
  *       201:
- *         description: User created
+ *         description: User created successfully
  *         content:
  *           application/json:
  *             schema:
@@ -39,13 +38,10 @@ const SALT_ROUNDS = parseInt(process.env.SALT_ROUNDS) || 10;
  *               properties:
  *                 id:
  *                   type: integer
- *                   example: 1
  *                 name:
  *                   type: string
- *                   example: Alice
  *                 email:
  *                   type: string
- *                   example: alice@example.com
  *       400:
  *         description: Missing fields
  *       409:
@@ -57,14 +53,14 @@ export const register = async (req, res) => {
     if (!name || !email || !password)
       return res.status(400).json({ message: 'Name, email, and password are required' });
 
-    if (users.find(u => u.email === email))
+    const existingUser = await db.User.findOne({ where: { email } });
+    if (existingUser)
       return res.status(409).json({ message: 'Email already registered' });
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const newUser = { id: idCounter++, name, email, passwordHash };
-    users.push(newUser);
+    const newUser = await db.User.create({ name, email, passwordHash });
 
-    const { passwordHash: _, ...publicUser } = newUser;
+    const { passwordHash: _, ...publicUser } = newUser.toJSON();
     res.status(201).json(publicUser);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -101,7 +97,6 @@ export const register = async (req, res) => {
  *               properties:
  *                 token:
  *                   type: string
- *                   example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
  *       400:
  *         description: Missing email or password
  *       401:
@@ -113,7 +108,7 @@ export const login = async (req, res) => {
     if (!email || !password)
       return res.status(400).json({ message: 'Email and password are required' });
 
-    const user = users.find(u => u.email === email);
+    const user = await db.User.findOne({ where: { email } });
     if (!user || !(await bcrypt.compare(password, user.passwordHash)))
       return res.status(401).json({ message: 'Invalid credentials' });
 
@@ -129,12 +124,12 @@ export const login = async (req, res) => {
  * /auth/users:
  *   get:
  *     tags: [Auth]
- *     summary: Get all registered users
+ *     summary: Get all registered users (public info only)
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: A list of all users (without password)
+ *         description: List of users
  *         content:
  *           application/json:
  *             schema:
@@ -152,7 +147,13 @@ export const login = async (req, res) => {
  *                     type: string
  *                     example: alice@example.com
  */
-export const getAllUsers = (req, res) => {
-  const publicUsers = users.map(({ passwordHash, ...u }) => u);
-  res.json(publicUsers);
+export const getAllUsers = async (req, res) => {
+  try {
+    const users = await db.User.findAll({
+      attributes: ['id', 'name', 'email']
+    });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
